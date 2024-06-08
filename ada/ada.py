@@ -148,8 +148,9 @@ class AdaptiveDiscriminatorAugmentation(nn.Module):
         self.p.copy_(p)
 
     def forward(self, images):
-        assert torch.is_tensor(images) and images.ndim == 4
-        batch_size, num_channels, height, width = images.shape
+        assert torch.is_tensor(images) 
+        assert images.ndim == 5
+        batch_size, num_channels, depth, height, width = images.shape
         device = images.device
 
         # Initialize inverse homogeneous 2D transform: G_inv @ pixel_out ==> pixel_in
@@ -311,7 +312,7 @@ class AdaptiveDiscriminatorAugmentation(nn.Module):
 
         # Execute if the transform is not identity.
         if C is not I_4:
-            images = images.reshape([batch_size, num_channels, height * width])
+            images = images.reshape([batch_size, num_channels, depth * height * width])
             if num_channels == 3:
                 images = C[:, :3, :3] @ images + C[:, :3, 3:]
             elif num_channels == 1:
@@ -319,7 +320,7 @@ class AdaptiveDiscriminatorAugmentation(nn.Module):
                 images = images * C[:, :, :3].sum(dim=2, keepdims=True) + C[:, :, 3:]
             else:
                 raise ValueError("Image must be RGB (3 channels) or L (1 channel)")
-            images = images.reshape([batch_size, num_channels, height, width])
+            images = images.reshape([batch_size, num_channels, depth, height, width])
 
         # ----------------------
         # Image-space filtering.
@@ -364,28 +365,33 @@ class AdaptiveDiscriminatorAugmentation(nn.Module):
 
         # Apply additive RGB noise with probability (noise * strength).
         if self.noise > 0:
-            sigma = torch.randn([batch_size, 1, 1, 1], device=device).abs() * self.noise_std
+            sigma = torch.randn([batch_size, 1, 1, 1, 1], device=device).abs() * self.noise_std
             sigma = torch.where(
-                torch.rand([batch_size, 1, 1, 1], device=device) < self.noise * self.p,
+                torch.rand([batch_size, 1, 1, 1, 1], device=device) < self.noise * self.p,
                 sigma,
                 torch.zeros_like(sigma),
             )
-            images = images + torch.randn([batch_size, num_channels, height, width], device=device) * sigma
+            images = images + torch.randn([batch_size, num_channels, depth, height, width], device=device) * sigma
 
         # Apply cutout with probability (cutout * strength).
         if self.cutout > 0:
-            size = torch.full([batch_size, 2, 1, 1, 1], self.cutout_size, device=device)
-            size = torch.where(
-                torch.rand([batch_size, 1, 1, 1, 1], device=device) < self.cutout * self.p,
-                size,
-                torch.zeros_like(size),
-            )
-            center = torch.rand([batch_size, 2, 1, 1, 1], device=device)
-            coord_x = torch.arange(width, device=device).reshape([1, 1, 1, -1])
-            coord_y = torch.arange(height, device=device).reshape([1, 1, -1, 1])
-            mask_x = (((coord_x + 0.5) / width - center[:, 0]).abs() >= size[:, 0] / 2)
-            mask_y = (((coord_y + 0.5) / height - center[:, 1]).abs() >= size[:, 1] / 2)
-            mask = torch.logical_or(mask_x, mask_y).to(torch.float32)
-            images = images * mask
+            size = torch.full([batch_size, 3, 1, 1, 1], self.cutout_size, device=device)
 
+            apply_cutout = torch.rand([batch_size, 1, 1, 1, 1], device=device) < self.cutout * self.p
+
+            size = torch.where(apply_cutout, size, torch.zeros_like(size))
+
+            center = torch.rand([batch_size, 3, 1, 1, 1], device=device)
+
+            coord_depth = torch.arange(depth, device=device).reshape([1, 1, 1, 1, -1])
+            coord_width = torch.arange(width, device=device).reshape([1, 1, 1, -1, 1])
+            coord_height = torch.arange(height, device=device).reshape([1, 1, -1, 1, 1])
+
+            mask_depth = (((coord_depth + 0.5) / depth - center[:, 0]).abs() >= size[:, 0] / 2)
+            mask_width = (((coord_width + 0.5) / width - center[:, 1]).abs() >= size[:, 1] / 2)
+            mask_height = (((coord_height + 0.5) / height - center[:, 2]).abs() >= size[:, 2] / 2)
+
+            mask = torch.logical_or(mask_depth, torch.logical_or(mask_width, mask_height)).to(torch.float32)
+
+            images = images * mask
         return images
