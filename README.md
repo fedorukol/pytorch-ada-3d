@@ -1,3 +1,11 @@
+# 3D standalone ADA imolementation for pytroch
+
+Currently working 3D augmentations: 
+- noise
+- cutout
+- hue
+- brightness
+
 # Adaptive Discriminator Augmentation for pytorch
 
 Standalone implementation of [Adaptive Discriminator Augmentation](https://arxiv.org/abs/2006.06676). 
